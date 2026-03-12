@@ -1,58 +1,57 @@
-"""LangChain 1.2 模型工厂"""
-from typing import Optional, Dict, Any, Union, List
+"""LangChain 1.2 模型工厂 - 优化版"""
+from typing import Optional, Union, List, Dict, Any
 import logging
 from functools import lru_cache
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
 
-# LangChain 1.2 官方支持的模型导入
+# LangChain 1.2 官方模型导入
 from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_mistralai import ChatMistralAI
 from langchain_groq import ChatGroq
 from langchain_ollama import ChatOllama
-from langchain_cohere import ChatCohere
 
-from .settings import settings, ModelProvider, ModelConfig
+from .settings import settings, ModelProvider
 
 logger = logging.getLogger(__name__)
 
 
 class ModelFactory:
-    """LangChain 1.2 模型工厂类"""
+    """LangChain 1.2 模型工厂类 - 优化版"""
+
+    # 提供商映射表，便于扩展
+    PROVIDER_MAP = {
+        ModelProvider.OPENAI: "create_openai",
+        ModelProvider.OPENAI_COMPATIBLE: "create_openai_compatible",
+        ModelProvider.ANTHROPIC: "create_anthropic",
+        ModelProvider.GOOGLE: "create_google",
+        ModelProvider.MISTRAL: "create_mistral",
+        ModelProvider.GROQ: "create_groq",
+        ModelProvider.OLLAMA: "create_ollama",
+        ModelProvider.DEEPSEEK: "create_deepseek",
+    }
 
     @classmethod
     def create_openai(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
-        """创建 OpenAI 模型实例（LangChain 1.2）"""
-        model = model_name or settings.OPENAI_MODEL
-
-        # 获取模型配置
-        model_config = settings.OPENAI_MODELS.get(model, {})
+        """创建 OpenAI 官方模型实例"""
+        model = model_name or settings.openai.default_model
 
         config = {
-            "api_key": kwargs.get("api_key", settings.OPENAI_API_KEY),
+            "api_key": kwargs.get("api_key", settings.openai.api_key),
             "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "max_tokens": kwargs.get("max_tokens",
-                                     getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
-            "max_retries": kwargs.get("max_retries", settings.DEFAULT_MAX_RETRIES),
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "timeout": kwargs.get("timeout", settings.openai.timeout),
+            "max_retries": kwargs.get("max_retries", settings.openai.max_retries),
         }
 
-        # 可选参数
-        if settings.OPENAI_ORG_ID:
-            config["organization"] = settings.OPENAI_ORG_ID
+        if settings.openai.organization:
+            config["organization"] = settings.openai.organization
 
-        if settings.OPENAI_BASE_URL:
-            config["base_url"] = settings.OPENAI_BASE_URL
-
-        # 添加其他可选参数
-        for param in ["top_p", "frequency_penalty", "presence_penalty"]:
-            if hasattr(model_config, param) and getattr(model_config, param) is not None:
-                config[param] = getattr(model_config, param)
+        if settings.openai.base_url:
+            config["base_url"] = settings.openai.base_url
 
         # 允许通过 kwargs 覆盖
         config.update(kwargs)
@@ -61,20 +60,67 @@ class ModelFactory:
         return ChatOpenAI(**config)
 
     @classmethod
-    def create_anthropic(cls, model_name: Optional[str] = None, **kwargs) -> ChatAnthropic:
-        """创建 Anthropic 模型实例（LangChain 1.2）"""
-        model = model_name or settings.ANTHROPIC_MODEL
-
-        model_config = settings.ANTHROPIC_MODELS.get(model, {})
+    def create_openai_compatible(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
+        """创建 OpenAI 兼容服务模型（阿里云、DeepSeek等）"""
+        model = model_name or settings.openai_compatible.default_model
 
         config = {
-            "api_key": kwargs.get("api_key", settings.ANTHROPIC_API_KEY),
+            "api_key": kwargs.get("api_key", settings.openai_compatible.api_key),
             "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "max_tokens": kwargs.get("max_tokens",
-                                     getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "base_url": kwargs.get("base_url", settings.openai_compatible.base_url),
+            "timeout": kwargs.get("timeout", settings.openai_compatible.timeout),
+            "max_retries": kwargs.get("max_retries", settings.openai_compatible.max_retries),
+        }
+
+        # 移除可能的冲突参数
+        if "organization" in config:
+            del config["organization"]
+
+        config.update(kwargs)
+
+        provider = settings.openai_compatible.provider_name
+        logger.debug(f"创建 {provider} 兼容模型: {model}")
+        return ChatOpenAI(**config)
+
+    @classmethod
+    def create_aliyun(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
+        """专门创建阿里云通义千问模型"""
+        kwargs["base_url"] = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+        return cls.create_openai_compatible(model_name or "qwen-plus", **kwargs)
+
+    @classmethod
+    def create_deepseek(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
+        """专门创建 DeepSeek 模型"""
+        model = model_name or settings.deepseek.default_model
+
+        config = {
+            "api_key": kwargs.get("api_key", settings.deepseek.api_key),
+            "model": model,
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "base_url": kwargs.get("base_url", settings.deepseek.base_url),
+            "timeout": kwargs.get("timeout", settings.deepseek.timeout),
+            "max_retries": kwargs.get("max_retries", settings.deepseek.max_retries),
+        }
+
+        config.update(kwargs)
+
+        logger.debug(f"创建 DeepSeek 模型: {model}")
+        return ChatOpenAI(**config)
+
+    @classmethod
+    def create_anthropic(cls, model_name: Optional[str] = None, **kwargs) -> ChatAnthropic:
+        """创建 Anthropic 模型实例"""
+        model = model_name or settings.anthropic.default_model
+
+        config = {
+            "api_key": kwargs.get("api_key", settings.anthropic.api_key),
+            "model": model,
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "timeout": kwargs.get("timeout", settings.anthropic.timeout),
         }
 
         config.update(kwargs)
@@ -84,19 +130,15 @@ class ModelFactory:
 
     @classmethod
     def create_google(cls, model_name: Optional[str] = None, **kwargs) -> ChatGoogleGenerativeAI:
-        """创建 Google Gemini 模型实例（LangChain 1.2）"""
-        model = model_name or settings.GOOGLE_MODEL
-
-        model_config = settings.GOOGLE_MODELS.get(model, {})
+        """创建 Google Gemini 模型实例"""
+        model = model_name or settings.google.default_model
 
         config = {
-            "google_api_key": kwargs.get("api_key", settings.GOOGLE_API_KEY),
+            "google_api_key": kwargs.get("api_key", settings.google.api_key),
             "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "max_output_tokens": kwargs.get("max_tokens",
-                                            getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_output_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "timeout": kwargs.get("timeout", settings.google.timeout),
         }
 
         # 移除多余的 api_key 参数
@@ -110,19 +152,15 @@ class ModelFactory:
 
     @classmethod
     def create_mistral(cls, model_name: Optional[str] = None, **kwargs) -> ChatMistralAI:
-        """创建 Mistral 模型实例（LangChain 1.2）"""
-        model = model_name or settings.MISTRAL_MODEL
-
-        model_config = settings.MISTRAL_MODELS.get(model, {})
+        """创建 Mistral 模型实例"""
+        model = model_name or settings.mistral.default_model
 
         config = {
-            "api_key": kwargs.get("api_key", settings.MISTRAL_API_KEY),
+            "api_key": kwargs.get("api_key", settings.mistral.api_key),
             "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "max_tokens": kwargs.get("max_tokens",
-                                     getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "timeout": kwargs.get("timeout", settings.mistral.timeout),
         }
 
         config.update(kwargs)
@@ -132,19 +170,15 @@ class ModelFactory:
 
     @classmethod
     def create_groq(cls, model_name: Optional[str] = None, **kwargs) -> ChatGroq:
-        """创建 Groq 模型实例（LangChain 1.2）"""
-        model = model_name or settings.GROQ_MODEL
-
-        model_config = settings.GROQ_MODELS.get(model, {})
+        """创建 Groq 模型实例"""
+        model = model_name or settings.groq.default_model
 
         config = {
-            "api_key": kwargs.get("api_key", settings.GROQ_API_KEY),
+            "api_key": kwargs.get("api_key", settings.groq.api_key),
             "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "max_tokens": kwargs.get("max_tokens",
-                                     getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "timeout": kwargs.get("timeout", settings.groq.timeout),
         }
 
         config.update(kwargs)
@@ -154,19 +188,15 @@ class ModelFactory:
 
     @classmethod
     def create_ollama(cls, model_name: Optional[str] = None, **kwargs) -> ChatOllama:
-        """创建 Ollama 模型实例（LangChain 1.2）"""
-        model = model_name or settings.OLLAMA_MODEL
-
-        model_config = settings.OLLAMA_MODELS.get(model, {})
+        """创建 Ollama 模型实例"""
+        model = model_name or settings.ollama.default_model
 
         config = {
-            "base_url": kwargs.get("base_url", settings.OLLAMA_BASE_URL),
+            "base_url": kwargs.get("base_url", settings.ollama.base_url),
             "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "num_predict": kwargs.get("max_tokens",
-                                      getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
+            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
+            "num_predict": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
+            "timeout": kwargs.get("timeout", settings.ollama.timeout),
         }
 
         config.update(kwargs)
@@ -175,88 +205,37 @@ class ModelFactory:
         return ChatOllama(**config)
 
     @classmethod
-    def create_deepseek(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
-        """创建 DeepSeek 模型实例（通过 OpenAI 兼容接口）"""
-        model = model_name or settings.DEEPSEEK_MODEL
-
-        model_config = settings.DEEPSEEK_MODELS.get(model, {})
-
-        config = {
-            "api_key": kwargs.get("api_key", settings.DEEPSEEK_API_KEY),
-            "model": model,
-            "temperature": kwargs.get("temperature",
-                                      getattr(model_config, "temperature", settings.DEFAULT_TEMPERATURE)),
-            "max_tokens": kwargs.get("max_tokens",
-                                     getattr(model_config, "max_tokens", settings.DEFAULT_MAX_TOKENS)),
-            "base_url": kwargs.get("base_url", settings.DEEPSEEK_BASE_URL),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
-            "max_retries": kwargs.get("max_retries", settings.DEFAULT_MAX_RETRIES),
-        }
-
-        config.update(kwargs)
-
-        logger.debug(f"创建 DeepSeek 模型: {model}")
-        return ChatOpenAI(**config)
-
-    @classmethod
-    def create_together(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
-        """创建 Together AI 模型实例（通过 OpenAI 兼容接口）"""
-        model = model_name or settings.TOGETHER_MODEL
-
-        config = {
-            "api_key": kwargs.get("api_key", settings.TOGETHER_API_KEY),
-            "model": model,
-            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
-            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
-            "base_url": kwargs.get("base_url", settings.TOGETHER_BASE_URL),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
-            "max_retries": kwargs.get("max_retries", settings.DEFAULT_MAX_RETRIES),
-        }
-
-        config.update(kwargs)
-
-        logger.debug(f"创建 Together AI 模型: {model}")
-        return ChatOpenAI(**config)
-
-    @classmethod
-    def create_fireworks(cls, model_name: Optional[str] = None, **kwargs) -> ChatOpenAI:
-        """创建 Fireworks AI 模型实例（通过 OpenAI 兼容接口）"""
-        model = model_name or settings.FIREWORKS_MODEL
-
-        config = {
-            "api_key": kwargs.get("api_key", settings.FIREWORKS_API_KEY),
-            "model": model,
-            "temperature": kwargs.get("temperature", settings.DEFAULT_TEMPERATURE),
-            "max_tokens": kwargs.get("max_tokens", settings.DEFAULT_MAX_TOKENS),
-            "base_url": kwargs.get("base_url", settings.FIREWORKS_BASE_URL),
-            "timeout": kwargs.get("timeout", settings.DEFAULT_TIMEOUT),
-            "max_retries": kwargs.get("max_retries", settings.DEFAULT_MAX_RETRIES),
-        }
-
-        config.update(kwargs)
-
-        logger.debug(f"创建 Fireworks AI 模型: {model}")
-        return ChatOpenAI(**config)
-
-    @classmethod
     def create_default(cls, **kwargs) -> BaseChatModel:
         """根据默认配置创建模型"""
         provider = kwargs.pop("provider", settings.DEFAULT_PROVIDER)
+
+        # 根据提供商获取默认模型名称
+        model_name = kwargs.pop("model_name", cls._get_default_model(provider))
 
         # 合并默认参数
         model_kwargs = {
             "temperature": settings.DEFAULT_TEMPERATURE,
             "max_tokens": settings.DEFAULT_MAX_TOKENS,
-            "timeout": settings.DEFAULT_TIMEOUT,
-            "max_retries": settings.DEFAULT_MAX_RETRIES,
             **kwargs
         }
 
-        if "model_name" not in model_kwargs and "model" not in model_kwargs:
-            model_kwargs["model_name"] = settings.DEFAULT_MODEL
+        logger.info(f"使用默认提供商: {provider.value}, 模型: {model_name}")
+        return cls.create(provider, model_name=model_name, **model_kwargs)
 
-        logger.info(f"使用默认提供商: {provider}")
-        return cls.create(provider, **model_kwargs)
+    @classmethod
+    def _get_default_model(cls, provider: ModelProvider) -> str:
+        """获取提供商的默认模型"""
+        model_map = {
+            ModelProvider.OPENAI: settings.openai.default_model,
+            ModelProvider.OPENAI_COMPATIBLE: settings.openai_compatible.default_model,
+            ModelProvider.ANTHROPIC: settings.anthropic.default_model,
+            ModelProvider.GOOGLE: settings.google.default_model,
+            ModelProvider.MISTRAL: settings.mistral.default_model,
+            ModelProvider.GROQ: settings.groq.default_model,
+            ModelProvider.OLLAMA: settings.ollama.default_model,
+            ModelProvider.DEEPSEEK: settings.deepseek.default_model,
+        }
+        return model_map.get(provider, "gpt-4o-mini")
 
     @classmethod
     def create(cls, provider: Union[str, ModelProvider], **kwargs) -> BaseChatModel:
@@ -264,28 +243,18 @@ class ModelFactory:
         if isinstance(provider, str):
             provider = ModelProvider(provider.lower())
 
-        # 提供商到创建方法的映射
-        creators = {
-            ModelProvider.OPENAI: cls.create_openai,
-            ModelProvider.ANTHROPIC: cls.create_anthropic,
-            ModelProvider.GOOGLE: cls.create_google,
-            ModelProvider.MISTRAL: cls.create_mistral,
-            ModelProvider.GROQ: cls.create_groq,
-            ModelProvider.OLLAMA: cls.create_ollama,
-            ModelProvider.COHERE: lambda **kw: ChatCohere(**kw),
-            ModelProvider.DEEPSEEK: cls.create_deepseek,
-            ModelProvider.TOGETHER: cls.create_together,
-            ModelProvider.FIREWORKS: cls.create_fireworks,
-        }
-
-        if provider not in creators:
+        if provider not in cls.PROVIDER_MAP:
             raise ValueError(f"不支持的模型提供商: {provider}")
 
-        return creators[provider](**kwargs)
+        # 动态调用对应的方法
+        method_name = cls.PROVIDER_MAP[provider]
+        method = getattr(cls, method_name)
+
+        return method(**kwargs)
 
     @classmethod
     def create_with_fallback(cls, providers: List[Union[str, ModelProvider]],
-                             **kwargs) -> BaseChatModel:
+                            **kwargs) -> BaseChatModel:
         """尝试按顺序创建模型，失败时回退到下一个"""
         last_error = None
 
@@ -301,9 +270,10 @@ class ModelFactory:
         raise RuntimeError(f"所有模型创建失败，最后错误: {last_error}")
 
 
-# 快捷函数
+# ========== 快捷函数 ==========
+
 @lru_cache()
-def get_llm(provider: Optional[str] = None, **kwargs) -> BaseChatModel:
+def get_llm(provider: Optional[Union[str, ModelProvider]] = None, **kwargs) -> BaseChatModel:
     """获取 LLM 实例（带缓存）"""
     if provider:
         return ModelFactory.create(provider, **kwargs)
@@ -311,8 +281,23 @@ def get_llm(provider: Optional[str] = None, **kwargs) -> BaseChatModel:
 
 
 def get_openai_llm(**kwargs) -> ChatOpenAI:
-    """获取 OpenAI LLM 实例"""
+    """获取 OpenAI 官方 LLM 实例"""
     return ModelFactory.create_openai(**kwargs)
+
+
+def get_openai_compatible_llm(**kwargs) -> ChatOpenAI:
+    """获取 OpenAI 兼容服务 LLM 实例"""
+    return ModelFactory.create_openai_compatible(**kwargs)
+
+
+def get_aliyun_llm(**kwargs) -> ChatOpenAI:
+    """获取阿里云通义千问 LLM 实例"""
+    return ModelFactory.create_aliyun(**kwargs)
+
+
+def get_deepseek_llm(**kwargs) -> ChatOpenAI:
+    """获取 DeepSeek LLM 实例"""
+    return ModelFactory.create_deepseek(**kwargs)
 
 
 def get_anthropic_llm(**kwargs) -> ChatAnthropic:
